@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The macOS app: builds NectarLink.app and wraps it in a disk image.
+#
+# Unlike ci.yml (which only compiles and tests the macOS build), this produces
+# something to run. It exists because Windows ships an NSIS installer and Linux
+# ships .deb/.rpm/AppImage/tarball, while macOS had no packaging at all.
+#
+# Ad-hoc signed: the app opens after right-click > Open on first launch, or
+# `xattr -dr com.apple.quarantine /Applications/NectarLink.app`. Signing with a
+# Developer ID and notarizing needs an Apple Developer account ($99/yr) and is
+# the only difference between this and a double-clickable build.
+name: macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [macos-app]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  QT_VERSION: "6.12.0"
+
+jobs:
+  app:
+    name: macOS app (arm64, ad-hoc)
+    # macos-latest is Apple Silicon (M1, macOS 15). An Intel build would need
+    # macos-15-intel and its Qt; Rosetta runs this one on Intel Macs anyway.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: What we're building on
+        run: |
+          uname -m
+          sw_vers
+          xcodebuild -version
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: macos-app
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+          aqtsource: git+https://github.com/miurahr/aqtinstall.git
+
+      - name: Build
+        run: cargo build --release --locked -p nectarlink-desktop
+
+      - name: Package (app + dmg)
+        run: |
+          chmod +x desktop/packaging/macos/build-app.sh desktop/packaging/macos/build-dmg.sh
+          ./desktop/packaging/macos/build-dmg.sh
+
+      - name: What came out
+        run: |
+          ls -lh dist/
+          du -sh dist/NectarLink.app
+          codesign -dv dist/NectarLink.app 2>&1 | sed 's/^/  /'
+          # The bundled app's own check, once more outside the script, so the
+          # log shows it even when packaging is skipped on a rerun.
+          dist/NectarLink.app/Contents/MacOS/nectarlink-desktop --version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nectarlink-macos-arm64
+          path: dist/*.dmg
+          retention-days: 30

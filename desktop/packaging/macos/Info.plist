@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The app bundle. build-app.sh fills in @VERSION@ and @BUILD@.
+
+  The usage descriptions are not decoration: macOS kills the app on the first
+  request to a protected resource if its description is missing, and a trust
+  prompt without one is declined by the system.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>nectarlink-desktop</string>
+	<key>CFBundleIconFile</key>
+	<string>NectarLink</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.thtbee.nectarlink</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>NectarLink</string>
+	<key>CFBundleDisplayName</key>
+	<string>NectarLink</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@BUILD@</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<!-- A normal app with a Dock icon: it opens real windows (mirror, files,
+	     camera). Set true to live in the menu bar alone, the way the Windows
+	     build lives in the tray. -->
+	<key>LSUIElement</key>
+	<false/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+
+	<!-- The phone's camera and microphone, streamed to this Mac (calls, the
+	     phone-as-webcam mode, Continuity Camera). -->
+	<key>NSCameraUsageDescription</key>
+	<string>NectarLink shows your phone's camera on this Mac and can use it as a webcam.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>NectarLink carries your phone's microphone to this Mac, and your Mac's to the phone.</string>
+
+	<!-- Discovery and transfer run over the local network; since macOS 15 that
+	     needs the local-network permission, and mDNS needs the service types. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>NectarLink finds your phone on the local network to pair and to transfer files.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nectarlink._udp</string>
+		<string>_irohv1._udp</string>
+	</array>
+
+	<!-- Opening links and apps on request (src/mac/browser.rs, shell.rs). -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>NectarLink opens links and apps on this Mac when your phone asks it to.</string>
+
+	<!-- Transfers, recordings and photo backups write to these folders. -->
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>NectarLink saves files from your phone to Downloads.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>NectarLink saves files from your phone to Documents.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>NectarLink syncs folders and saves files on the Desktop.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>NectarLink reads files from drives you plug in, when you send them to your phone.</string>
+
+	<key>NSHumanReadableCopyright</key>
+	<string>GPL-3.0-or-later. The name and the mark are covered by the trademark policy.</string>
+</dict>
+</plist>

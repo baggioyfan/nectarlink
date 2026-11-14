@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds NectarLink.app: the release binary inside a bundle, with Qt and its
+# plugins collected into it, ad-hoc signed. macOS has no installer to mirror
+# the Windows one: the .app is the deliverable (build-dmg.sh wraps it).
+#
+#   VERSION=0.1.5 ./desktop/packaging/macos/build-app.sh
+#
+# Environment:
+#   VERSION   the version in CFBundleShortVersionString (default: Cargo.toml's)
+#   BIN_PATH  the built executable (default: target/release/nectarlink-desktop)
+#   OUT_DIR   where NectarLink.app goes (default: dist/)
+#   SIGN_ID   the signing identity (default: "-", an ad-hoc signature)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
+VERSION="${VERSION:-$(awk -F'"' '/^version = "/ { print $2; exit }' "${REPO_ROOT}/Cargo.toml")}"
+BIN_PATH="${BIN_PATH:-${REPO_ROOT}/target/release/nectarlink-desktop}"
+OUT_DIR="${OUT_DIR:-${REPO_ROOT}/dist}"
+SIGN_ID="${SIGN_ID:--}"
+APP="${OUT_DIR}/NectarLink.app"
+ICON_SRC="${REPO_ROOT}/assets/brand/icon-512.png"
+
+die() { echo "error: $*" >&2; exit 1; }
+step() { echo "==> $*"; }
+
+[[ "$(uname -s)" == "Darwin" ]] || die "this packages a macOS app; run it on macOS"
+[[ -f "${BIN_PATH}" ]] || die "no binary at ${BIN_PATH}: cargo build --release -p nectarlink-desktop first"
+[[ -f "${ICON_SRC}" ]] || die "no icon at ${ICON_SRC}"
+[[ -n "${VERSION}" ]] || die "no version"
+
+# CFBundleVersion is a build number: digits only. 0.1.5 -> 15, 0.1.5-nightly.7 -> 15.
+BUILD="$(printf '%s' "${VERSION}" | sed 's/-.*//' | tr -d '.')"
+
+step "Bundling NectarLink ${VERSION} (build ${BUILD})"
+rm -rf "${APP}"
+mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Frameworks" "${APP}/Contents/PlugIns"
+install -m 0755 "${BIN_PATH}" "${APP}/Contents/MacOS/nectarlink-desktop"
+
+step "Writing Info.plist"
+sed -e "s/@VERSION@/${VERSION}/g" -e "s/@BUILD@/${BUILD}/g" \
+    "${HERE}/Info.plist" > "${APP}/Contents/Info.plist"
+plutil -lint "${APP}/Contents/Info.plist" >/dev/null || die "Info.plist didn't lint"
+
+step "Making the icon"
+ICONSET="$(mktemp -d)/NectarLink.iconset"
+mkdir -p "${ICONSET}"
+for size in 16 32 128 256 512; do
+    sips -z "${size}" "${size}" "${ICON_SRC}" --out "${ICONSET}/icon_${size}x${size}.png" >/dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "${ICON_SRC}" --out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "${ICONSET}" -o "${APP}/Contents/Resources/NectarLink.icns"
+
+step "Collecting Qt into the bundle (macdeployqt)"
+MACDEPLOYQT="${MACDEPLOYQT:-}"
+if [[ -z "${MACDEPLOYQT}" ]]; then
+    if [[ -n "${QT_ROOT_DIR:-}" && -x "${QT_ROOT_DIR}/bin/macdeployqt" ]]; then
+        MACDEPLOYQT="${QT_ROOT_DIR}/bin/macdeployqt"
+    else
+        MACDEPLOYQT="$(command -v macdeployqt || true)"
+    fi
+fi
+[[ -n "${MACDEPLOYQT}" && -x "${MACDEPLOYQT}" ]] || die "no macdeployqt: put Qt's bin on PATH or set QT_ROOT_DIR"
+
+# The QML is compiled into the binary (ahead-of-time, see build.rs), so
+# macdeployqt can't discover the imports by itself: -qmldir points it at the
+# sources to scan. It reports `app.nectarlink` as unresolvable, which is
+# expected -- that module lives inside the executable.
+"${MACDEPLOYQT}" "${APP}" \
+    -qmldir="${REPO_ROOT}/desktop/app/qml" \
+    -always-overwrite \
+    -verbose=1 2>&1 | sed 's/^/    /' | grep -viE 'cannot resolve|not found|WARNING: Could not find' || true
+[[ -d "${APP}/Contents/Frameworks/QtCore.framework" ]] || die "macdeployqt left no QtCore.framework in the bundle"
+[[ -f "${APP}/Contents/PlugIns/platforms/libqcocoa.dylib" ]] || die "macdeployqt left no cocoa platform plugin: the app can't open a window"
+
+step "Signing (${SIGN_ID})"
+# Ad-hoc by default: it runs, but every rebuild is a different identity, so the
+# first launch needs Open from the context menu (or xattr -dr com.apple.quarantine).
+# A Developer ID and notarization are what make it open with a double click;
+# that needs an Apple Developer account.
+codesign --force --deep --sign "${SIGN_ID}" --timestamp=none "${APP}" 2>&1 | sed 's/^/    /' || die "codesign failed"
+
+step "Checking the result"
+codesign --verify --deep --strict --verbose=2 "${APP}" 2>&1 | sed 's/^/    /' || die "the signature didn't verify"
+
+BIN="${APP}/Contents/MacOS/nectarlink-desktop"
+# Anything still pointing at the build machine's Qt or Homebrew means the app
+# only works on the machine that built it.
+if otool -L "${BIN}" | grep -qE '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)'; then
+    otool -L "${BIN}" | grep -E '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)' | sed 's/^/    /'
+    die "the executable still links libraries outside the bundle"
+fi
+# dyld resolves the frameworks and Qt's own plugins at load time, so this
+# fails loudly here if the bundle is incomplete -- before anyone double-clicks it.
+GOT="$("${BIN}" --version 2>&1)" || die "the bundled app doesn't start: ${GOT}"
+printf '    %s\n' "${GOT}" "${APP}"
+
+step "Done: ${APP} ($(du -sh "${APP}" | cut -f1), $(lipo -archs "${BIN}"))"
+echo "    open it with: open ${APP}"
