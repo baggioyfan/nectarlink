@@ -72,6 +72,9 @@ jobs:
           ls -lh dist/
           du -sh dist/NectarLink.app
           codesign -dv dist/NectarLink.app 2>&1 | sed 's/^/  /'
+          # The catalogues the app reads for its language; zh_CN is the one to
+          # look for on a Chinese Mac.
+          ls -1 dist/NectarLink.app/Contents/MacOS/*.qm | sed 's/^/  /'
           # The bundled app's own check, once more outside the script, so the
           # log shows it even when packaging is skipped on a rerun.
           dist/NectarLink.app/Contents/MacOS/nectarlink-desktop --version

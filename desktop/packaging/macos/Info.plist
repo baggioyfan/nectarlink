@@ -11,6 +11,19 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<!-- The languages the catalogues in Contents/MacOS cover (src/i18n.rs).
+	     macOS shows these in Finder's Get Info and the per-app language list. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>de</string>
+		<string>zh-Hans</string>
+		<string>tr</string>
+		<string>pt-BR</string>
+		<string>vi</string>
+		<string>es</string>
+		<string>ru</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>nectarlink-desktop</string>
 	<key>CFBundleIconFile</key>

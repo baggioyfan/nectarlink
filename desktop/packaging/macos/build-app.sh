@@ -38,6 +38,55 @@ rm -rf "${APP}"
 mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Frameworks" "${APP}/Contents/PlugIns"
 install -m 0755 "${BIN_PATH}" "${APP}/Contents/MacOS/nectarlink-desktop"
 
+step "Compiling the translations"
+LRELEASE="${LRELEASE:-}"
+if [[ -z "${LRELEASE}" ]]; then
+    if [[ -n "${QT_ROOT_DIR:-}" && -x "${QT_ROOT_DIR}/bin/lrelease" ]]; then
+        LRELEASE="${QT_ROOT_DIR}/bin/lrelease"
+    else
+        LRELEASE="$(command -v lrelease || true)"
+    fi
+fi
+[[ -n "${LRELEASE}" && -x "${LRELEASE}" ]] || die "no lrelease: put Qt's bin on PATH or set QT_ROOT_DIR"
+
+# The app looks for its catalogues next to the executable (src/i18n.rs,
+# select_translation_dir), so they go in Contents/MacOS. build.rs compiles them
+# on Linux only and package.ps1 compiles them for Windows, so without this step
+# the bundle speaks English whatever the system language.
+#
+# Only the languages Settings offers are compiled, as on Windows: a catalogue
+# still being translated stays out (i18n::LANGUAGES is the list).
+LANG_CODES="$(sed -n '/pub const LANGUAGES/,/^];/p' "${REPO_ROOT}/desktop/app/src/i18n.rs" \
+    | grep -oE '^[[:space:]]*\("[A-Za-z_]*"' \
+    | tr -d ' ("' \
+    | grep -v '^$')"
+[[ -n "${LANG_CODES}" ]] || die "couldn't read the language list from src/i18n.rs"
+for code in ${LANG_CODES}; do
+    # English is the source language: it has no catalogue, and needs none.
+    if [[ "${code}" == "en" ]]; then
+        continue
+    fi
+    ts="${REPO_ROOT}/desktop/app/i18n/nectarlink_${code}.ts"
+    [[ -f "${ts}" ]] || die "no catalogue for ${code}: ${ts}"
+    "${LRELEASE}" -silent "${ts}" -qm "${APP}/Contents/MacOS/nectarlink_${code}.qm"
+    echo "    ${code}"
+done
+ls -1 "${APP}/Contents/MacOS/"*.qm | wc -l | xargs printf '    %s catalogues\n'
+
+# Qt's own strings (the standard buttons, the file dialogs, the context menus
+# QML doesn't draw itself). install_translator looks for qt_<locale>.qm in a
+# translations/ folder beside the executable; Qt ships qtbase_<locale>.qm, so
+# it's copied under the name the loader asks for.
+QT_TRANSLATIONS="${QT_ROOT_DIR:-}/translations"
+if [[ -d "${QT_TRANSLATIONS}" ]]; then
+    mkdir -p "${APP}/Contents/MacOS/translations"
+    for code in ${LANG_CODES}; do
+        if [[ -f "${QT_TRANSLATIONS}/qtbase_${code}.qm" ]]; then
+            cp "${QT_TRANSLATIONS}/qtbase_${code}.qm" "${APP}/Contents/MacOS/translations/qt_${code}.qm"
+        fi
+    done
+    printf '    %s Qt catalogues\n' "$(ls -1 "${APP}/Contents/MacOS/translations" | wc -l | tr -d ' ')"
+fi
 step "Writing Info.plist"
 sed -e "s/@VERSION@/${VERSION}/g" -e "s/@BUILD@/${BUILD}/g" \
     "${HERE}/Info.plist" > "${APP}/Contents/Info.plist"
@@ -97,6 +146,15 @@ codesign --force --deep --sign "${SIGN_ID}" --timestamp=none "${APP}" 2>&1 | sed
 
 step "Checking the result"
 codesign --verify --deep --strict --verbose=2 "${APP}" 2>&1 | sed 's/^/    /' || die "the signature didn't verify"
+
+# A catalogue that compiled to nothing is worse than an absent one: the app
+# would load it and show empty strings.
+for code in ${LANG_CODES}; do
+    if [[ "${code}" == "en" ]]; then
+        continue
+    fi
+    [[ -s "${APP}/Contents/MacOS/nectarlink_${code}.qm" ]] || die "the ${code} catalogue is empty"
+done
 
 BIN="${APP}/Contents/MacOS/nectarlink-desktop"
 # Anything still pointing at the build machine's Qt or Homebrew means the app
