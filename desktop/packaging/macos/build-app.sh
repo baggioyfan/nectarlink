@@ -67,12 +67,26 @@ fi
 # macdeployqt can't discover the imports by itself: -qmldir points it at the
 # sources to scan. It reports `app.nectarlink` as unresolvable, which is
 # expected -- that module lives inside the executable.
-"${MACDEPLOYQT}" "${APP}" \
-    -qmldir="${REPO_ROOT}/desktop/app/qml" \
-    -always-overwrite \
-    -verbose=1 2>&1 | sed 's/^/    /' | grep -viE 'cannot resolve|not found|WARNING: Could not find' || true
+DEPLOY_LOG="$(mktemp -t nectarlink-macdeployqt)"
+if ! "${MACDEPLOYQT}" "${APP}" \
+        -qmldir="${REPO_ROOT}/desktop/app/qml" \
+        -always-overwrite \
+        -verbose=1 >"${DEPLOY_LOG}" 2>&1; then
+    cat "${DEPLOY_LOG}" >&2
+    die "macdeployqt failed (log above)"
+fi
+grep -viE 'cannot resolve|Cannot find|WARNING' "${DEPLOY_LOG}" | sed 's/^/    /' || true
 [[ -d "${APP}/Contents/Frameworks/QtCore.framework" ]] || die "macdeployqt left no QtCore.framework in the bundle"
 [[ -f "${APP}/Contents/PlugIns/platforms/libqcocoa.dylib" ]] || die "macdeployqt left no cocoa platform plugin: the app can't open a window"
+
+# Our own QML lives in the binary, but Qt's modules are loaded from the bundle
+# at run time, and macdeployqt only takes what qmlimportscanner resolved. This
+# is the list desktop/app/qml imports; a missing one is a blank window, not a
+# build error, so it's checked here rather than discovered on someone's Mac.
+QML_ROOT="${APP}/Contents/Resources/qml"
+for module in QtQuick QtQuick/Shapes QtQuick/Effects QtQuick/Layouts QtQuick/Dialogs QtQuick/Window QtQml QtQml/Models; do
+    [[ -f "${QML_ROOT}/${module}/qmldir" ]] || die "the bundle lacks the ${module} QML module"
+done
 
 step "Signing (${SIGN_ID})"
 # Ad-hoc by default: it runs, but every rebuild is a different identity, so the
@@ -86,9 +100,11 @@ codesign --verify --deep --strict --verbose=2 "${APP}" 2>&1 | sed 's/^/    /' ||
 
 BIN="${APP}/Contents/MacOS/nectarlink-desktop"
 # Anything still pointing at the build machine's Qt or Homebrew means the app
-# only works on the machine that built it.
-if otool -L "${BIN}" | grep -qE '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)'; then
-    otool -L "${BIN}" | grep -E '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)' | sed 's/^/    /'
+# only works on the machine that built it. The first line otool prints is the
+# binary's own path, which is inside the checkout, so it's skipped: only the
+# indented dependency lines matter.
+if otool -L "${BIN}" | tail -n +2 | grep -qE '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)'; then
+    otool -L "${BIN}" | tail -n +2 | grep -E '/Users/|/opt/homebrew/|/usr/local/(Cellar|Qt)' | sed 's/^/    /'
     die "the executable still links libraries outside the bundle"
 fi
 # dyld resolves the frameworks and Qt's own plugins at load time, so this
